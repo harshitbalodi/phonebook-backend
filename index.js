@@ -5,10 +5,12 @@ const cors = require("cors");
 require('dotenv').config();
 
 const PORT = process.env.PORT || 3001;
+
 morgan.token("header", function (req, res) {
   return Object.keys(req.body).length === 0 ?"-":JSON.stringify(req.body);
 });
 
+app.use(express.static('dist'));
 app.use(
   morgan(
     ":method :url :status :res[content-length] - :response-time ms :header "
