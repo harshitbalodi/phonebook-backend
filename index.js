@@ -2,15 +2,35 @@ const express = require("express");
 const app = express();
 const morgan = require("morgan");
 const cors = require("cors");
-require('dotenv').config();
+const mongoose = require("mongoose");
+const {
+  Person,
+  SavePerson,
+  DeletePerson,
+  UpdatePerson,
+  FindUsingId,
+} = require("./models/person");
+require("dotenv").config();
 
 const PORT = process.env.PORT || 3001;
 
+const url = process.env.MONGO_URI;
+mongoose.set("strictQuery", false);
+
+mongoose
+  .connect(url)
+  .then((res) => {
+    console.log("connection successful");
+  })
+  .catch((err) => {
+    console.log("connection error", err.message);
+  });
+
 morgan.token("header", function (req, res) {
-  return Object.keys(req.body).length === 0 ?"-":JSON.stringify(req.body);
+  return Object.keys(req.body).length === 0 ? "-" : JSON.stringify(req.body);
 });
 
-app.use(express.static('dist'));
+app.use(express.static("dist"));
 app.use(
   morgan(
     ":method :url :status :res[content-length] - :response-time ms :header "
@@ -20,32 +40,12 @@ app.use(
 app.use(express.json());
 app.use(cors());
 
-let persons = [
-  {
-    id: 1,
-    name: "Arto Hellas",
-    number: "040-123456",
-  },
-  {
-    id: 2,
-    name: "Ada Lovelace",
-    number: "39-44-5323523",
-  },
-  {
-    id: 3,
-    name: "Dan Abramov",
-    number: "12-43-234345",
-  },
-  {
-    id: 4,
-    name: "Mary Poppendieck",
-    number: "39-23-6423122",
-  },
-];
+var persons = [];
 
 app.get("/info", (req, res) => {
   const len = persons.length;
   const currentDate = new Date();
+
   const options = {
     weekday: "short",
     month: "short",
@@ -56,48 +56,90 @@ app.get("/info", (req, res) => {
     second: "numeric",
     timeZoneName: "short",
   };
+
   const ISTDate = currentDate.toLocaleString("en-US", options);
 
   res.send(`<p> Phonebook has info for ${len} people <br/>${ISTDate} </p>`);
 });
 
-app.get("/api/persons", (req, res) => {
+app.get("/api/persons", async (req, res) => {
+  persons = await Person.find({});
   res.status(200).json(persons);
 });
 
-app.get("/api/persons/:id", (req, res) => {
-  const id = Number(req.params.id);
-  const data = persons.find((person) => person.id === id);
-  if (data === undefined){ 
-    return res.status(404).send({error:"The person do not exist"});
+app.get("/api/persons/:id", async (req, res, next) => {
+  const id = req.params.id;
+  try {
+    const Persondata = await FindUsingId(id);
+    res.status(200).json(Persondata);
+  } catch (err) {
+    const error = new Error("not a valid URL");
+    error.statusCode = 404;
+    next(error);
   }
-  res.json(data).send();
 });
 
-app.delete("/api/persons/:id", (req, res) => {
-  const id = Number(req.params.id);
-  const person = persons.find((person) => person.id === id);
-  if (person === undefined){ 
-   return res.status(404).json({"error":"The person is already deleted"});
+app.delete("/api/persons/:id", async (req, res, next) => {
+  const id = req.params.id;
+  console.log("at line number 73", id);
+  try {
+    await DeletePerson(id);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
   }
-  persons = persons.filter((person) => person.id !== id);
-  res.status(204).send();
 });
 
-app.post("/api/persons", (req, res) => {
+app.post("/api/persons", async (req, res, next) => {
   const data = req.body;
 
   if (data.number.trim() === "" || data.number === undefined)
     return res.status(400).json({ error: "Number is missing" });
+  try {
+    const savedPersons = await SavePerson(data);
+    console.log(savedPersons);
+    savedPersons.id = savedPersons._id.toString();
+    delete savedPersons._id;
+    delete savedPersons.__v;
 
-  const Exist = persons.some((person) => person.name === data.name);
-  if (Exist) return res.status(400).json({ error: "Name must be unique" });
+    res.status(201).json(savedPersons);
+  } catch (error) {
+    next(error);
+  }
+});
 
-  data.id = Math.round(Math.random() * 1000000000);
-  persons.push(data);
-  res.status(200).json(data);
+app.put("/api/persons/:id", async (req, res, next) => {
+  const id = req.params.id;
+  const newData = req.body;
+
+  try {
+    const updatedPerson = await UpdatePerson(id, newData);
+    res.status(200).json(updatedPerson);
+  } catch (err) {}
 });
 
 app.listen(PORT, () => {
   console.log(`running on port ${PORT}`);
+});
+
+const unknownEndpoint = (req, res) => {
+  res.status(404).send({ error: "Unknown Endpoint" });
+};
+
+app.use(unknownEndpoint);
+
+const errorHandler = (error, req, res, next) => {
+  console.error(error.stack);
+  const statusCode = error.statusCode || 500;
+  res
+    .status(statusCode)
+    .json({ error: { message: error.message || "Internal Server Error" } });
+};
+
+app.use(errorHandler);
+
+process.on("SIGINT", () => {
+  mongoose.connection.close(() => {
+    console.log("MongoDB connection closed due to app termination");
+  });
 });
